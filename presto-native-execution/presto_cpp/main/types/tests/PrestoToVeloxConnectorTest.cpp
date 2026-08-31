@@ -13,10 +13,12 @@
  */
 
 #include <gtest/gtest.h>
+#include "presto_cpp/main/connectors/DeltaPrestoToVeloxConnector.h"
 #include "presto_cpp/main/connectors/HivePrestoToVeloxConnector.h"
 #include "presto_cpp/main/connectors/IcebergPrestoToVeloxConnector.h"
 #include "presto_cpp/main/connectors/PrestoToVeloxConnectorUtils.h"
 #include "presto_cpp/main/types/PrestoToVeloxExpr.h"
+#include "presto_cpp/presto_protocol/connector/delta/DeltaConnectorProtocol.h"
 #include "presto_cpp/presto_protocol/connector/hive/HiveConnectorProtocol.h"
 #include "presto_cpp/presto_protocol/connector/iceberg/IcebergConnectorProtocol.h"
 #include "velox/common/base/tests/GTestUtils.h"
@@ -62,6 +64,9 @@ TEST_F(PrestoToVeloxConnectorTest, registerVariousConnectors) {
       std::pair(
           "iceberg",
           std::make_unique<IcebergPrestoToVeloxConnector>("iceberg")));
+  connectorList.emplace_back(
+      std::pair(
+          "delta", std::make_unique<DeltaPrestoToVeloxConnector>("delta")));
   connectorList.emplace_back(
       std::pair("tpch", std::make_unique<HivePrestoToVeloxConnector>("tpch")));
 
@@ -875,4 +880,99 @@ TEST_F(PrestoToVeloxConnectorTest, icebergTableHandleWithMissingLayout) {
       icebergConnector.toVeloxTableHandle(
           tableHandle, *exprConverter_, *typeParser_),
       "Missing table layout");
+}
+
+TEST_F(PrestoToVeloxConnectorTest, deltaSplitPreservesNativeReadMetadata) {
+  protocol::delta::DeltaSplit split;
+  split.connectorId = "delta";
+  split.schemaName = "default";
+  split.tableName = "events";
+  split.tableLocation = "s3://warehouse/default/events/";
+  split.filePath = "part=2026-08-31/part-00000.parquet";
+  split.start = 100;
+  split.length = 4096;
+  split.fileSize = 8192;
+  split.partitionValues = {{"empty", ""}, {"part", "2026-08-31"}};
+  split.nullPartitionKeys = {"nullable_part"};
+
+  protocol::SplitContext context;
+  context.cacheable = true;
+  const DeltaPrestoToVeloxConnector deltaConnector("delta");
+  auto result = deltaConnector.toVeloxSplit("delta", &split, &context);
+
+  auto* nativeSplit =
+      dynamic_cast<connector::hive::iceberg::HiveIcebergSplit*>(result.get());
+  ASSERT_NE(nativeSplit, nullptr);
+  EXPECT_EQ(
+      nativeSplit->filePath,
+      "s3://warehouse/default/events/part=2026-08-31/part-00000.parquet");
+  EXPECT_EQ(nativeSplit->fileFormat, dwio::common::FileFormat::PARQUET);
+  EXPECT_EQ(nativeSplit->start, 100);
+  EXPECT_EQ(nativeSplit->length, 4096);
+  ASSERT_TRUE(nativeSplit->partitionKeys.at("empty").has_value());
+  EXPECT_EQ(nativeSplit->partitionKeys.at("empty").value(), "");
+  EXPECT_EQ(nativeSplit->partitionKeys.at("part").value(), "2026-08-31");
+  EXPECT_FALSE(nativeSplit->partitionKeys.at("nullable_part").has_value());
+  EXPECT_EQ(nativeSplit->infoColumns.at("$path"), nativeSplit->filePath);
+  EXPECT_EQ(nativeSplit->infoColumns.at("$file_size"), "8192");
+  EXPECT_EQ(nativeSplit->customSplitInfo.at("table_format"), "delta");
+  EXPECT_TRUE(nativeSplit->deleteFiles.empty());
+
+  split.filePath = "/absolute/events.parquet";
+  result = deltaConnector.toVeloxSplit("delta", &split, &context);
+  nativeSplit =
+      dynamic_cast<connector::hive::iceberg::HiveIcebergSplit*>(result.get());
+  ASSERT_NE(nativeSplit, nullptr);
+  EXPECT_EQ(nativeSplit->filePath, "/absolute/events.parquet");
+}
+
+TEST_F(PrestoToVeloxConnectorTest, deltaHandlesUsePhysicalColumnNames) {
+  protocol::delta::DeltaColumnHandle column;
+  column.logicalName = "customer_id";
+  column.physicalName = std::make_shared<protocol::String>("col-74c1b9");
+  column.dataType = "bigint";
+  column.columnType = protocol::delta::ColumnType::REGULAR;
+
+  const DeltaPrestoToVeloxConnector deltaConnector("delta");
+  auto columnResult = deltaConnector.toVeloxColumnHandle(&column, *typeParser_);
+  auto* hiveColumn =
+      dynamic_cast<connector::hive::HiveColumnHandle*>(columnResult.get());
+  ASSERT_NE(hiveColumn, nullptr);
+  EXPECT_EQ(hiveColumn->name(), "col-74c1b9");
+  EXPECT_EQ(hiveColumn->dataType(), BIGINT());
+
+  auto deltaTable = std::make_shared<protocol::delta::DeltaTableHandle>();
+  deltaTable->deltaTable.schemaName = "default";
+  deltaTable->deltaTable.tableName = "events";
+
+  protocol::delta::DeltaColumn dataColumn;
+  dataColumn.logicalName = "customer_id";
+  dataColumn.physicalName = std::make_shared<protocol::String>("col-74c1b9");
+  dataColumn.type = "bigint";
+
+  protocol::delta::DeltaColumn partitionColumn;
+  partitionColumn.logicalName = "event_date";
+  partitionColumn.type = "date";
+  partitionColumn.partition = true;
+  deltaTable->deltaTable.columns = {dataColumn, partitionColumn};
+
+  protocol::TableHandle tableHandle;
+  tableHandle.connectorId = "delta";
+  tableHandle.connectorHandle = deltaTable;
+  auto tableResult = deltaConnector.toVeloxTableHandle(
+      tableHandle, *exprConverter_, *typeParser_);
+
+  auto* hiveTable =
+      dynamic_cast<connector::hive::HiveTableHandle*>(tableResult.get());
+  ASSERT_NE(hiveTable, nullptr);
+  EXPECT_EQ(hiveTable->tableName(), "default.events");
+  ASSERT_NE(hiveTable->dataColumns(), nullptr);
+  ASSERT_EQ(hiveTable->dataColumns()->size(), 1);
+  EXPECT_EQ(hiveTable->dataColumns()->nameOf(0), "col-74c1b9");
+  ASSERT_EQ(hiveTable->filterColumnHandles().size(), 2);
+  EXPECT_EQ(
+      hiveTable->filterColumnHandles()[1]->columnType(),
+      connector::hive::HiveColumnHandle::ColumnType::kPartitionKey);
+  EXPECT_FALSE(hiveTable->filterColumnHandles()[1]
+                   ->isPartitionDateValueDaysSinceEpoch());
 }

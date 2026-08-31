@@ -12,6 +12,7 @@
  * limitations under the License.
  */
 #include "presto_cpp/main/connectors/Registration.h"
+#include "presto_cpp/main/connectors/DeltaPrestoToVeloxConnector.h"
 #include "presto_cpp/main/connectors/HivePrestoToVeloxConnector.h"
 #include "presto_cpp/main/connectors/IcebergPrestoToVeloxConnector.h"
 #include "presto_cpp/main/connectors/SystemConnector.h"
@@ -30,12 +31,14 @@
 #ifdef PRESTO_ENABLE_CUDF
 #include "velox/experimental/cudf/CudfConfig.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveConnector.h"
+#include "velox/experimental/cudf/connectors/hive/iceberg/CudfIcebergConnector.h"
 #endif
 
 namespace facebook::presto {
 namespace {
 
 constexpr char const* kHiveHadoop2ConnectorName = "hive-hadoop2";
+constexpr char const* kDeltaConnectorName = "delta";
 constexpr char const* kIcebergConnectorName = "iceberg";
 
 using ConnectorRegistry =
@@ -51,6 +54,11 @@ const ConnectorRegistry& prestoToVeloxConnectorsRegistry() {
        [](const std::string& connectorId) {
          registerPrestoToVeloxConnector(
              std::make_unique<IcebergPrestoToVeloxConnector>(connectorId));
+       }},
+      {kDeltaConnectorName,
+       [](const std::string& connectorId) {
+         registerPrestoToVeloxConnector(
+             std::make_unique<DeltaPrestoToVeloxConnector>(connectorId));
        }},
       {velox::connector::tpch::TpchConnectorFactory::kTpchConnectorName,
        [](const std::string& connectorId) {
@@ -111,6 +119,10 @@ void registerConnectors() {
   registerPrestoToVeloxConnector(
       std::make_unique<HivePrestoToVeloxConnector>(kHiveHadoop2ConnectorName));
   registerPrestoToVeloxConnector(
+      std::make_unique<DeltaPrestoToVeloxConnector>(kDeltaConnectorName));
+  registerPrestoToVeloxConnector(
+      std::make_unique<DeltaPrestoToVeloxConnector>("hive-delta"));
+  registerPrestoToVeloxConnector(
       std::make_unique<IcebergPrestoToVeloxConnector>(kIcebergConnectorName));
   registerPrestoToVeloxConnector(
       std::make_unique<TpchPrestoToVeloxConnector>(
@@ -154,6 +166,12 @@ void registerConnectorFactories() {
   facebook::presto::registerConnectorFactory(
       std::make_shared<facebook::velox::connector::hive::HiveConnectorFactory>(
           kHiveHadoop2ConnectorName));
+
+#ifndef PRESTO_ENABLE_CUDF
+  facebook::presto::registerConnectorFactory(
+      std::make_shared<facebook::velox::connector::hive::HiveConnectorFactory>(
+          kDeltaConnectorName));
+#endif
 #ifdef PRESTO_ENABLE_CUDF
   facebook::presto::unregisterConnectorFactory(
       facebook::velox::connector::hive::HiveConnectorFactory::
@@ -170,6 +188,12 @@ void registerConnectorFactories() {
       std::make_shared<facebook::velox::cudf_velox::connector::hive::
                            CudfHiveConnectorFactory>(
           kHiveHadoop2ConnectorName));
+
+  // Reuse the delete-free Iceberg data-source path for Delta. It supplies
+  // native cuDF Parquet I/O and split-specific constant/missing columns.
+  facebook::presto::registerConnectorFactory(
+      std::make_shared<facebook::velox::cudf_velox::connector::hive::iceberg::
+                           CudfIcebergConnectorFactory>(kDeltaConnectorName));
 #endif
 
   // Register TPC-DS connector factory

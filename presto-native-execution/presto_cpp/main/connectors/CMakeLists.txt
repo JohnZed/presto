@@ -11,6 +11,7 @@
 # limitations under the License.
 add_library(
   presto_connectors
+  DeltaPrestoToVeloxConnector.cpp
   IcebergPrestoToVeloxConnector.cpp
   PrestoToVeloxConnectorUtils.cpp
   HivePrestoToVeloxConnector.cpp
@@ -26,7 +27,12 @@ if(PRESTO_ENABLE_ARROW_FLIGHT_CONNECTOR)
 endif()
 
 if(PRESTO_ENABLE_CUDF)
-  target_link_libraries(presto_connectors velox_cudf_hive_connector cudf::cudf)
+  target_link_libraries(
+    presto_connectors
+    velox_cudf_hive_connector
+    velox_cudf_iceberg_connector
+    cudf::cudf
+  )
 endif()
 
 target_link_libraries(presto_connectors presto_velox_expr_conversion velox)
