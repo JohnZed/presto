@@ -18,6 +18,7 @@
 #include "presto_cpp/main/connectors/PrestoToVeloxConnector.h"
 #include "presto_cpp/main/thrift/ProtocolToThrift.h"
 #include "presto_cpp/main/thrift/ThriftIO.h"
+#include "presto_cpp/presto_protocol/connector/delta/DeltaConnectorProtocol.h"
 
 using namespace facebook::presto;
 
@@ -26,9 +27,13 @@ class TaskUpdateRequestTest : public ::testing::Test {
   void SetUp() override {
     registerPrestoToVeloxConnector(
         std::make_unique<facebook::presto::HivePrestoToVeloxConnector>("hive"));
+    protocol::registerConnectorProtocol(
+        "hive-delta",
+        std::make_unique<protocol::delta::DeltaConnectorProtocol>());
   }
 
   void TearDown() override {
+    protocol::unregisterConnectorProtocol("hive-delta");
     unregisterPrestoToVeloxConnector("hive");
   }
 };
@@ -136,6 +141,35 @@ TEST_F(TaskUpdateRequestTest, binaryHiveSplitFromThrift) {
   ASSERT_EQ(
       hiveSplit->nodeSelectionStrategy,
       protocol::NodeSelectionStrategy::NO_PREFERENCE);
+}
+
+TEST_F(TaskUpdateRequestTest, deltaSplitFromThriftJsonFallback) {
+  thrift::ConnectorSplit thriftSplit;
+  thriftSplit.jsonValue_ref() = R"({
+    "@type": "hive-delta",
+    "connectorId": "delta",
+    "schemaName": "default",
+    "tableName": "events",
+    "tableLocation": "s3://warehouse/default/events",
+    "filePath": "part=2026-08-31/part-00000.parquet",
+    "start": 0,
+    "length": 4096,
+    "fileSize": 4096,
+    "partitionValues": {"empty": "", "part": "2026-08-31"},
+    "nullPartitionKeys": ["nullable_part"]
+  })";
+
+  std::shared_ptr<protocol::ConnectorSplit> connectorSplit;
+  thrift::fromThrift(thriftSplit, connectorSplit);
+
+  auto deltaSplit =
+      std::dynamic_pointer_cast<protocol::delta::DeltaSplit>(connectorSplit);
+  ASSERT_NE(deltaSplit, nullptr);
+  EXPECT_EQ(deltaSplit->tableLocation, "s3://warehouse/default/events");
+  EXPECT_EQ(deltaSplit->partitionValues.at("empty"), "");
+  EXPECT_EQ(
+      deltaSplit->nullPartitionKeys,
+      protocol::Set<protocol::String>({"nullable_part"}));
 }
 
 TEST_F(TaskUpdateRequestTest, binaryRemoteSplitFromThrift) {

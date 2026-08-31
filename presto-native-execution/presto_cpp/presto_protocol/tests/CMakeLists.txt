@@ -19,6 +19,7 @@ add_executable(
   CustomSerializedValueRoutingTest.cpp
   DataSizeTest.cpp
   DeleteTest.cpp
+  DeltaConnectorProtocolTest.cpp
   DomainTest.cpp
   DurationTest.cpp
   LifespanTest.cpp
