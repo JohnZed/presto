@@ -21,10 +21,13 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import static com.facebook.presto.spi.schedule.NodeSelectionStrategy.SOFT_AFFINITY;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -36,11 +39,13 @@ public class DeltaSplit
     private final String connectorId;
     private final String schema;
     private final String table;
+    private final String tableLocation;
     private final String filePath;
     private final long start;
     private final long length;
     private final long fileSize;
     private final Map<String, String> partitionValues;
+    private final Set<String> nullPartitionKeys;
     private final NodeSelectionStrategy nodeSelectionStrategy;
 
     @JsonCreator
@@ -48,11 +53,13 @@ public class DeltaSplit
             @JsonProperty("connectorId") String connectorId,
             @JsonProperty("schemaName") String schema,
             @JsonProperty("tableName") String table,
+            @JsonProperty("tableLocation") String tableLocation,
             @JsonProperty("filePath") String filePath,
             @JsonProperty("start") long start,
             @JsonProperty("length") long length,
             @JsonProperty("fileSize") long fileSize,
             @JsonProperty("partitionValues") Map<String, String> partitionValues,
+            @JsonProperty("nullPartitionKeys") Set<String> nullPartitionKeys,
             @JsonProperty("nodeSelectionStrategy") NodeSelectionStrategy nodeSelectionStrategy)
     {
         checkArgument(start >= 0, "start must be non-negative");
@@ -62,11 +69,14 @@ public class DeltaSplit
         this.connectorId = requireNonNull(connectorId, "connector id is null");
         this.schema = requireNonNull(schema, "schema name is null");
         this.table = requireNonNull(table, "table name is null");
+        this.tableLocation = requireNonNull(tableLocation, "tableLocation is null");
         this.filePath = requireNonNull(filePath, "filePath name is null");
         this.start = start;
         this.length = length;
         this.fileSize = fileSize;
         this.partitionValues = ImmutableMap.copyOf(requireNonNull(partitionValues, "partitionValues id is null"));
+        this.nullPartitionKeys = ImmutableSet.copyOf(requireNonNull(nullPartitionKeys, "nullPartitionKeys is null"));
+        checkArgument(Collections.disjoint(this.partitionValues.keySet(), this.nullPartitionKeys), "Partition keys cannot have both null and non-null values");
         this.nodeSelectionStrategy = nodeSelectionStrategy;
     }
 
@@ -86,6 +96,12 @@ public class DeltaSplit
     public String getTable()
     {
         return table;
+    }
+
+    @JsonProperty
+    public String getTableLocation()
+    {
+        return tableLocation;
     }
 
     @JsonProperty
@@ -116,6 +132,12 @@ public class DeltaSplit
     public Map<String, String> getPartitionValues()
     {
         return partitionValues;
+    }
+
+    @JsonProperty
+    public Set<String> getNullPartitionKeys()
+    {
+        return nullPartitionKeys;
     }
 
     @Override

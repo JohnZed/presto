@@ -16,9 +16,11 @@ package com.facebook.presto.delta;
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.presto.spi.schedule.NodeSelectionStrategy;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertThrows;
 
 /**
  * Test {@link DeltaSplit} is created correctly with given arguments and JSON serialization/deserialization works.
@@ -34,11 +36,13 @@ public class TestDeltaSplit
                 "delta",
                 "database",
                 "table",
+                "s3://bucket/path/to/delta/table",
                 "s3://bucket/path/to/delta/table/file1.parquet",
                 0,
                 200,
                 500,
-                ImmutableMap.of("part1", "part1Val"),
+                ImmutableMap.of("part1", "part1Val", "empty_part", ""),
+                ImmutableSet.of("null_part"),
                 NodeSelectionStrategy.NO_PREFERENCE);
 
         String json = codec.toJson(expected);
@@ -47,11 +51,30 @@ public class TestDeltaSplit
         assertEquals(actual.getConnectorId(), expected.getConnectorId());
         assertEquals(actual.getSchema(), expected.getSchema());
         assertEquals(actual.getTable(), expected.getTable());
+        assertEquals(actual.getTableLocation(), expected.getTableLocation());
         assertEquals(actual.getFilePath(), expected.getFilePath());
         assertEquals(actual.getStart(), expected.getStart());
         assertEquals(actual.getLength(), expected.getLength());
         assertEquals(actual.getFileSize(), expected.getFileSize());
         assertEquals(actual.getSplitSizeInBytes(), expected.getSplitSizeInBytes());
         assertEquals(actual.getPartitionValues(), expected.getPartitionValues());
+        assertEquals(actual.getNullPartitionKeys(), expected.getNullPartitionKeys());
+    }
+
+    @Test
+    public void testPartitionKeyCannotBeBothNullAndNonNull()
+    {
+        assertThrows(IllegalArgumentException.class, () -> new DeltaSplit(
+                "delta",
+                "database",
+                "table",
+                "s3://bucket/path/to/delta/table",
+                "file1.parquet",
+                0,
+                200,
+                500,
+                ImmutableMap.of("part", ""),
+                ImmutableSet.of("part"),
+                NodeSelectionStrategy.NO_PREFERENCE));
     }
 }

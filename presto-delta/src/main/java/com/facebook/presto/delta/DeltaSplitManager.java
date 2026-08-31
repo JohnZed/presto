@@ -18,12 +18,14 @@ import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorSplitSource;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.connector.ConnectorPartitionHandle;
 import com.facebook.presto.spi.connector.ConnectorSplitManager;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 import com.google.common.collect.ImmutableList;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import jakarta.inject.Inject;
@@ -32,9 +34,12 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static com.facebook.presto.hive.HiveCommonSessionProperties.getNodeSelectionStrategy;
+import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.stream.Collectors.toMap;
@@ -93,15 +98,19 @@ public class DeltaSplitManager
             while (rowIterator.hasNext() && currentSplitCount < maxSize && currentSplitCount < maxBatchSize) {
                 Row row = rowIterator.next();
                 FileStatus addFileStatus = InternalScanFileUtils.getAddFileStatus(row);
+                checkNoDeletionVector(InternalScanFileUtils.getDeletionVectorDescriptorFromRow(row));
+                Map<String, String> partitionValues = InternalScanFileUtils.getPartitionValues(row);
                 splitBuilder.add(new DeltaSplit(
                         connectorId,
                         deltaTable.getSchemaName(),
                         deltaTable.getTableName(),
+                        deltaTable.getTableLocation(),
                         addFileStatus.getPath(),
                         0, /* start */
                         addFileStatus.getSize() /* split length - default is read the entire file in one split */,
                         addFileStatus.getSize(),
-                        removeNullPartitionValues(InternalScanFileUtils.getPartitionValues(row)),
+                        getNonNullPartitionValues(partitionValues),
+                        getNullPartitionKeys(partitionValues),
                         getNodeSelectionStrategy(session)));
                 currentSplitCount++;
             }
@@ -128,13 +137,28 @@ public class DeltaSplitManager
     }
 
     /**
-     * Utility method to remove the null value partition values.
-     * These null values cause problems later when used with Guava Immutable map structures.
+     * Immutable maps cannot contain null values, so null partition keys travel
+     * separately on the split.
      */
-    private static Map<String, String> removeNullPartitionValues(Map<String, String> partitionValues)
+    private static Map<String, String> getNonNullPartitionValues(Map<String, String> partitionValues)
     {
         return partitionValues.entrySet().stream()
                 .filter(entry -> entry.getValue() != null)
                 .collect(toMap(Entry::getKey, Entry::getValue));
+    }
+
+    private static Set<String> getNullPartitionKeys(Map<String, String> partitionValues)
+    {
+        return partitionValues.entrySet().stream()
+                .filter(entry -> entry.getValue() == null)
+                .map(Entry::getKey)
+                .collect(toImmutableSet());
+    }
+
+    static void checkNoDeletionVector(DeletionVectorDescriptor deletionVector)
+    {
+        if (deletionVector != null) {
+            throw new PrestoException(NOT_SUPPORTED, "Delta Lake deletion vectors are not supported");
+        }
     }
 }
