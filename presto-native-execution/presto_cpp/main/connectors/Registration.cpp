@@ -17,6 +17,8 @@
 #include "presto_cpp/main/connectors/IcebergPrestoToVeloxConnector.h"
 #include "presto_cpp/main/connectors/SystemConnector.h"
 
+#include "velox/common/config/Config.h"
+
 #ifdef PRESTO_ENABLE_ARROW_FLIGHT_CONNECTOR
 #include "presto_cpp/main/connectors/arrow_flight/ArrowFlightConnector.h"
 #include "presto_cpp/main/connectors/arrow_flight/ArrowPrestoToVeloxConnector.h"
@@ -40,6 +42,36 @@ namespace {
 constexpr char const* kHiveHadoop2ConnectorName = "hive-hadoop2";
 constexpr char const* kDeltaConnectorName = "delta";
 constexpr char const* kIcebergConnectorName = "iceberg";
+
+class DeltaConnectorFactory final : public ConnectorFactory {
+ public:
+  DeltaConnectorFactory() : ConnectorFactory(kDeltaConnectorName) {}
+
+  std::shared_ptr<velox::connector::Connector> newConnector(
+      const std::string& id,
+      std::shared_ptr<const velox::config::ConfigBase> config,
+      folly::Executor* ioExecutor = nullptr,
+      [[maybe_unused]] folly::Executor* cpuExecutor = nullptr) override {
+    auto properties = config->rawConfigsCopy();
+    // Delta data files omit partition columns. Mapping Parquet columns by
+    // position can therefore associate a projected partition column with a
+    // physical data column and leave the data column unreadable. Delta column
+    // mapping also requires physical-name lookup, so name mapping is an
+    // invariant of this connector rather than an optional Hive tuning knob.
+    properties["hive.use-column-names"] = "true";
+    auto deltaConfig =
+        std::make_shared<velox::config::ConfigBase>(std::move(properties));
+
+#ifdef PRESTO_ENABLE_CUDF
+    return std::make_shared<
+        velox::cudf_velox::connector::hive::iceberg::CudfIcebergConnector>(
+        id, std::move(deltaConfig), ioExecutor);
+#else
+    return std::make_shared<velox::connector::hive::HiveConnector>(
+        id, std::move(deltaConfig), ioExecutor);
+#endif
+  }
+};
 
 using ConnectorRegistry =
     std::unordered_map<std::string, std::function<void(const std::string&)>>;
@@ -167,11 +199,8 @@ void registerConnectorFactories() {
       std::make_shared<facebook::velox::connector::hive::HiveConnectorFactory>(
           kHiveHadoop2ConnectorName));
 
-#ifndef PRESTO_ENABLE_CUDF
   facebook::presto::registerConnectorFactory(
-      std::make_shared<facebook::velox::connector::hive::HiveConnectorFactory>(
-          kDeltaConnectorName));
-#endif
+      std::make_shared<DeltaConnectorFactory>());
 #ifdef PRESTO_ENABLE_CUDF
   facebook::presto::unregisterConnectorFactory(
       facebook::velox::connector::hive::HiveConnectorFactory::
@@ -189,11 +218,6 @@ void registerConnectorFactories() {
                            CudfHiveConnectorFactory>(
           kHiveHadoop2ConnectorName));
 
-  // Reuse the delete-free Iceberg data-source path for Delta. It supplies
-  // native cuDF Parquet I/O and split-specific constant/missing columns.
-  facebook::presto::registerConnectorFactory(
-      std::make_shared<facebook::velox::cudf_velox::connector::hive::iceberg::
-                           CudfIcebergConnectorFactory>(kDeltaConnectorName));
 #endif
 
   // Register TPC-DS connector factory

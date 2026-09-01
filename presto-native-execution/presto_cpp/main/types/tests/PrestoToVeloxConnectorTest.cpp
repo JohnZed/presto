@@ -901,7 +901,7 @@ TEST_F(PrestoToVeloxConnectorTest, deltaSplitPreservesNativeReadMetadata) {
   auto result = deltaConnector.toVeloxSplit("delta", &split, &context);
 
   auto* nativeSplit =
-      dynamic_cast<connector::hive::iceberg::HiveIcebergSplit*>(result.get());
+      dynamic_cast<connector::hive::HiveConnectorSplit*>(result.get());
   ASSERT_NE(nativeSplit, nullptr);
   EXPECT_EQ(
       nativeSplit->filePath,
@@ -916,12 +916,16 @@ TEST_F(PrestoToVeloxConnectorTest, deltaSplitPreservesNativeReadMetadata) {
   EXPECT_EQ(nativeSplit->infoColumns.at("$path"), nativeSplit->filePath);
   EXPECT_EQ(nativeSplit->infoColumns.at("$file_size"), "8192");
   EXPECT_EQ(nativeSplit->customSplitInfo.at("table_format"), "delta");
-  EXPECT_TRUE(nativeSplit->deleteFiles.empty());
+#ifndef PRESTO_ENABLE_CUDF
+  EXPECT_EQ(
+      dynamic_cast<connector::hive::iceberg::HiveIcebergSplit*>(result.get()),
+      nullptr);
+#endif
 
   split.filePath = "/absolute/events.parquet";
   result = deltaConnector.toVeloxSplit("delta", &split, &context);
   nativeSplit =
-      dynamic_cast<connector::hive::iceberg::HiveIcebergSplit*>(result.get());
+      dynamic_cast<connector::hive::HiveConnectorSplit*>(result.get());
   ASSERT_NE(nativeSplit, nullptr);
   EXPECT_EQ(nativeSplit->filePath, "/absolute/events.parquet");
 }
@@ -969,10 +973,35 @@ TEST_F(PrestoToVeloxConnectorTest, deltaHandlesUsePhysicalColumnNames) {
   ASSERT_NE(hiveTable->dataColumns(), nullptr);
   ASSERT_EQ(hiveTable->dataColumns()->size(), 1);
   EXPECT_EQ(hiveTable->dataColumns()->nameOf(0), "col-74c1b9");
-  ASSERT_EQ(hiveTable->filterColumnHandles().size(), 2);
-  EXPECT_EQ(
-      hiveTable->filterColumnHandles()[1]->columnType(),
-      connector::hive::HiveColumnHandle::ColumnType::kPartitionKey);
-  EXPECT_FALSE(hiveTable->filterColumnHandles()[1]
-                   ->isPartitionDateValueDaysSinceEpoch());
+  EXPECT_TRUE(hiveTable->filterColumnHandles().empty());
+
+  auto layout = std::make_shared<protocol::delta::DeltaTableLayoutHandle>();
+  layout->predicate.domains = std::make_shared<
+      protocol::Map<protocol::delta::DeltaColumnHandle, protocol::Domain>>();
+  auto lowBlock = serializeToBlock(
+      BaseVector::createConstant(
+          BIGINT(), variant(int64_t{10}), 1, pool_.get()),
+      pool_.get());
+  auto highBlock = serializeToBlock(
+      BaseVector::createConstant(
+          BIGINT(), variant(int64_t{20}), 1, pool_.get()),
+      pool_.get());
+  auto filterColumn = column;
+  layout->predicate.domains->emplace(
+      filterColumn,
+      createSingleRangeDomain(
+          "bigint",
+          lowBlock,
+          protocol::Bound::EXACTLY,
+          highBlock,
+          protocol::Bound::EXACTLY,
+          false));
+  tableHandle.connectorTableLayout = layout;
+  tableResult = deltaConnector.toVeloxTableHandle(
+      tableHandle, *exprConverter_, *typeParser_);
+  hiveTable =
+      dynamic_cast<connector::hive::HiveTableHandle*>(tableResult.get());
+  ASSERT_NE(hiveTable, nullptr);
+  ASSERT_EQ(hiveTable->filterColumnHandles().size(), 1);
+  EXPECT_EQ(hiveTable->filterColumnHandles()[0]->name(), "col-74c1b9");
 }
