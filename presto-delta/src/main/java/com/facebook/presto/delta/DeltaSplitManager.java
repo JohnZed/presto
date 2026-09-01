@@ -23,6 +23,7 @@ import com.facebook.presto.spi.connector.ConnectorPartitionHandle;
 import com.facebook.presto.spi.connector.ConnectorSplitManager;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
@@ -32,6 +33,7 @@ import jakarta.inject.Inject;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -39,7 +41,6 @@ import java.util.concurrent.CompletableFuture;
 
 import static com.facebook.presto.hive.HiveCommonSessionProperties.getNodeSelectionStrategy;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.stream.Collectors.toMap;
@@ -110,7 +111,7 @@ public class DeltaSplitManager
                         addFileStatus.getSize() /* split length - default is read the entire file in one split */,
                         addFileStatus.getSize(),
                         getNonNullPartitionValues(partitionValues),
-                        getNullPartitionKeys(partitionValues),
+                        getNullPartitionKeys(partitionValues, deltaTable.getColumns()),
                         getNodeSelectionStrategy(session)));
                 currentSplitCount++;
             }
@@ -147,12 +148,19 @@ public class DeltaSplitManager
                 .collect(toMap(Entry::getKey, Entry::getValue));
     }
 
-    private static Set<String> getNullPartitionKeys(Map<String, String> partitionValues)
+    static Set<String> getNullPartitionKeys(Map<String, String> partitionValues, List<DeltaColumn> columns)
     {
-        return partitionValues.entrySet().stream()
+        ImmutableSet.Builder<String> nullPartitionKeys = ImmutableSet.builder();
+        partitionValues.entrySet().stream()
                 .filter(entry -> entry.getValue() == null)
                 .map(Entry::getKey)
-                .collect(toImmutableSet());
+                .forEach(nullPartitionKeys::add);
+        columns.stream()
+                .filter(DeltaColumn::isPartition)
+                .map(DeltaColumn::getLogicalName)
+                .filter(name -> !partitionValues.containsKey(name))
+                .forEach(nullPartitionKeys::add);
+        return nullPartitionKeys.build();
     }
 
     static void checkNoDeletionVector(DeletionVectorDescriptor deletionVector)

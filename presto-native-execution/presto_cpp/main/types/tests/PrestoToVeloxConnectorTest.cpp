@@ -916,7 +916,12 @@ TEST_F(PrestoToVeloxConnectorTest, deltaSplitPreservesNativeReadMetadata) {
   EXPECT_EQ(nativeSplit->infoColumns.at("$path"), nativeSplit->filePath);
   EXPECT_EQ(nativeSplit->infoColumns.at("$file_size"), "8192");
   EXPECT_EQ(nativeSplit->customSplitInfo.at("table_format"), "delta");
-#ifndef PRESTO_ENABLE_CUDF
+#ifdef PRESTO_ENABLE_CUDF
+  auto* icebergSplit =
+      dynamic_cast<connector::hive::iceberg::HiveIcebergSplit*>(result.get());
+  ASSERT_NE(icebergSplit, nullptr);
+  EXPECT_TRUE(icebergSplit->deleteFiles.empty());
+#else
   EXPECT_EQ(
       dynamic_cast<connector::hive::iceberg::HiveIcebergSplit*>(result.get()),
       nullptr);
@@ -971,8 +976,9 @@ TEST_F(PrestoToVeloxConnectorTest, deltaHandlesUsePhysicalColumnNames) {
   ASSERT_NE(hiveTable, nullptr);
   EXPECT_EQ(hiveTable->tableName(), "default.events");
   ASSERT_NE(hiveTable->dataColumns(), nullptr);
-  ASSERT_EQ(hiveTable->dataColumns()->size(), 1);
+  ASSERT_EQ(hiveTable->dataColumns()->size(), 2);
   EXPECT_EQ(hiveTable->dataColumns()->nameOf(0), "col-74c1b9");
+  EXPECT_EQ(hiveTable->dataColumns()->nameOf(1), "event_date");
   EXPECT_TRUE(hiveTable->filterColumnHandles().empty());
 
   auto layout = std::make_shared<protocol::delta::DeltaTableLayoutHandle>();

@@ -239,11 +239,12 @@ DeltaPrestoToVeloxConnector::toVeloxTableHandle(
   for (const auto& column : deltaTableHandle->deltaTable.columns) {
     const auto name = sourceName(column.physicalName, column.logicalName);
     const auto type = stringToType(column.type, typeParser);
-    if (!column.partition) {
-      dataColumnNames.emplace_back(name);
-      dataColumnTypes.emplace_back(VELOX_DYNAMIC_TYPE_DISPATCH(
-          fieldNamesToLowerCase, type->kind(), type));
-    }
+    // dataColumns is the logical table schema used to type filters as well as
+    // physical reads. Include partition columns so split-specific constants
+    // can participate in filters before the Iceberg reader injects them.
+    dataColumnNames.emplace_back(name);
+    dataColumnTypes.emplace_back(VELOX_DYNAMIC_TYPE_DISPATCH(
+        fieldNamesToLowerCase, type->kind(), type));
   }
 
   velox::common::SubfieldFilters subfieldFilters;
