@@ -538,6 +538,7 @@ public class PrestoNativeQueryRunnerUtils
         private Optional<String> remoteFunctionServerUds = Optional.empty();
         private TimeZoneKey timeZoneKey = TimeZoneKey.getTimeZoneKey(TimeZone.getDefault().getID());
         private boolean caseSensitiveParitions;
+        private boolean enableCudf;
         private Optional<String> workerImage = Optional.empty();
         // External worker launcher is applicable only for the native iceberg query runner, since it depends on other
         // properties it should be created once all the other query runner configs are set. This variable indicates
@@ -593,13 +594,19 @@ public class PrestoNativeQueryRunnerUtils
             return this;
         }
 
+        public DeltaQueryRunnerBuilder setEnableCudf(boolean enableCudf)
+        {
+            this.enableCudf = enableCudf;
+            return this;
+        }
+
         public QueryRunner build()
                 throws Exception
         {
             Optional<BiFunction<Integer, URI, Process>> externalWorkerLauncher = Optional.empty();
             if (this.useExternalWorkerLauncher) {
                 externalWorkerLauncher = getExternalWorkerLauncher("delta", "delta", serverBinary, cacheMaxSize, remoteFunctionServerUds,
-                        Optional.empty(), false, false, false, false, false, false, false, workerImage, dataDirectory);
+                        Optional.empty(), false, false, false, false, false, false, enableCudf, workerImage, dataDirectory);
             }
             DeltaQueryRunner.Builder builder = DeltaQueryRunner.builder()
                     .setExtraProperties(extraProperties)
@@ -1007,6 +1014,10 @@ public class PrestoNativeQueryRunnerUtils
         private Process launchWorkerContainer(Path tempDirectoryPath, int workerIndex, int workerPort)
         {
             GenericContainer<?> container = new GenericContainer<>(DockerImageName.parse(workerImage.get()));
+            if (enableCudf) {
+                container.withEnv("NVIDIA_VISIBLE_DEVICES", "all");
+                container.withEnv("NVIDIA_DRIVER_CAPABILITIES", "compute,utility");
+            }
 
             // Bind-mount the temp directory at the same path (config, catalog, node properties, SSD cache)
             container.withFileSystemBind(tempDirectoryPath.toString(), tempDirectoryPath.toString(), BindMode.READ_WRITE);
@@ -1035,6 +1046,9 @@ public class PrestoNativeQueryRunnerUtils
                     cmd.withHostConfig(hostConfig);
                 }
                 hostConfig.withNetworkMode("host");
+                if (enableCudf) {
+                    hostConfig.withRuntime("nvidia");
+                }
                 // Opt the container out of SELinux confinement (e.g. Podman on Fedora). Without
                 // this, the container process (container_t) is denied access to the bind-mounted
                 // host files, which are labelled user_tmp_t (see AVC "denied { open }" errors).
