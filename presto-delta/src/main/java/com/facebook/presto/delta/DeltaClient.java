@@ -58,11 +58,13 @@ public class DeltaClient
     private static final String TABLE_NOT_FOUND_ERROR_TEMPLATE = "Delta table (%s.%s) no longer exists.";
     private static final String LOG_STORE_CONFIG_PREFIX = "io.delta.kernel.logStore.";
     private final HdfsEnvironment hdfsEnvironment;
+    private final DeltaQuerySnapshotCache snapshotCache;
 
     @Inject
-    public DeltaClient(HdfsEnvironment hdfsEnvironment)
+    public DeltaClient(HdfsEnvironment hdfsEnvironment, DeltaQuerySnapshotCache snapshotCache)
     {
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
+        this.snapshotCache = requireNonNull(snapshotCache, "snapshotCache is null");
     }
 
     /**
@@ -83,6 +85,23 @@ public class DeltaClient
             Optional<Long> snapshotId,
             Optional<Long> snapshotAsOfTimestampMillis)
     {
+        return snapshotCache.getTable(
+                session.getQueryId(),
+                schemaTableName,
+                tableLocation,
+                snapshotId,
+                snapshotAsOfTimestampMillis,
+                () -> loadTable(config, session, schemaTableName, tableLocation, snapshotId, snapshotAsOfTimestampMillis));
+    }
+
+    private Optional<DeltaTable> loadTable(
+            DeltaConfig config,
+            ConnectorSession session,
+            SchemaTableName schemaTableName,
+            String tableLocation,
+            Optional<Long> snapshotId,
+            Optional<Long> snapshotAsOfTimestampMillis)
+    {
         Path location = new Path(tableLocation);
         Optional<Engine> deltaEngine = loadDeltaEngine(session, location, schemaTableName);
         if (!deltaEngine.isPresent()) {
@@ -92,6 +111,7 @@ public class DeltaClient
         Table deltaTable = loadDeltaTable(location.toString(), deltaEngine.get());
         Snapshot snapshot = getSnapshot(deltaTable, deltaEngine.get(), schemaTableName, snapshotId,
                 snapshotAsOfTimestampMillis);
+        snapshotCache.putSnapshot(session.getQueryId(), tableLocation, snapshot.getVersion(), deltaEngine.get(), snapshot);
         return Optional.of(new DeltaTable(
                 schemaTableName.getSchemaName(),
                 schemaTableName.getTableName(),
@@ -149,7 +169,26 @@ public class DeltaClient
     {
         requireNonNull(deltaTable, "deltaTable is null");
         checkArgument(deltaTable.getSnapshotId().isPresent(), "Snapshot id is missing from the Delta table");
-        Optional<Engine> deltaEngine = loadDeltaEngine(session,
+        long snapshotId = deltaTable.getSnapshotId().get();
+        try {
+            DeltaQuerySnapshotCache.ResolvedSnapshot resolvedSnapshot = snapshotCache.getSnapshot(
+                            session.getQueryId(),
+                            deltaTable.getTableLocation(),
+                            snapshotId)
+                    .orElseGet(() -> loadSnapshot(session, deltaTable, snapshotId));
+            return resolvedSnapshot.getSnapshot().getScanBuilder().build()
+                    .getScanFiles(resolvedSnapshot.getEngine());
+        }
+        catch (TableNotFoundException e) {
+            throw new PrestoException(StandardErrorCode.NOT_FOUND,
+                    format("Delta table not found in '%s'", deltaTable.getTableLocation()), e);
+        }
+    }
+
+    private DeltaQuerySnapshotCache.ResolvedSnapshot loadSnapshot(ConnectorSession session, DeltaTable deltaTable, long snapshotId)
+    {
+        Optional<Engine> deltaEngine = loadDeltaEngine(
+                session,
                 new Path(deltaTable.getTableLocation()),
                 new SchemaTableName(deltaTable.getSchemaName(), deltaTable.getTableName()));
         if (!deltaEngine.isPresent()) {
@@ -157,20 +196,13 @@ public class DeltaClient
                     format("Could not obtain Delta engine in '%s'", deltaTable.getTableLocation()));
         }
         Table sourceTable = loadDeltaTable(deltaTable.getTableLocation(), deltaEngine.get());
+        Snapshot snapshot = sourceTable.getSnapshotAsOfVersion(deltaEngine.get(), snapshotId);
+        return snapshotCache.putSnapshot(session.getQueryId(), deltaTable.getTableLocation(), snapshotId, deltaEngine.get(), snapshot);
+    }
 
-        if (!deltaTable.getSnapshotId().isPresent()) {
-            throw new PrestoException(DeltaErrorCode.DELTA_ERROR_LOADING_SNAPSHOT, "Could not obtain snapshot id");
-        }
-
-        try {
-            return sourceTable.getSnapshotAsOfVersion(deltaEngine.get(),
-                            deltaTable.getSnapshotId().get()).getScanBuilder().build()
-                    .getScanFiles(deltaEngine.get());
-        }
-        catch (TableNotFoundException e) {
-            throw new PrestoException(StandardErrorCode.NOT_FOUND,
-                    format("Delta table not found in '%s'", deltaTable.getTableLocation()), e);
-        }
+    public void cleanupQuery(String queryId)
+    {
+        snapshotCache.cleanupQuery(queryId);
     }
 
     private Optional<Engine> loadDeltaEngine(ConnectorSession session, Path tableLocation,

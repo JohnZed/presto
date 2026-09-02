@@ -95,6 +95,7 @@ public class DeltaModule
         binder.bind(DeltaConnectorId.class).toInstance(new DeltaConnectorId(connectorId));
         binder.bind(DeltaMetadata.class).in(Scopes.SINGLETON);
         binder.bind(DeltaClient.class).in(Scopes.SINGLETON);
+        binder.bind(DeltaQuerySnapshotCache.class).in(Scopes.SINGLETON);
         binder.bind(DeltaSplitManager.class).in(Scopes.SINGLETON);
         binder.bind(DeltaPageSourceProvider.class).in(Scopes.SINGLETON);
         binder.bind(DeltaSessionProperties.class).in(Scopes.SINGLETON);

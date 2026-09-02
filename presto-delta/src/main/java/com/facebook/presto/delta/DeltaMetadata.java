@@ -111,6 +111,12 @@ public class DeltaMetadata
     }
 
     @Override
+    public void cleanupQuery(ConnectorSession session)
+    {
+        deltaClient.cleanupQuery(session.getQueryId());
+    }
+
+    @Override
     public List<String> listSchemaNames(ConnectorSession session)
     {
         ArrayList<String> schemas = new ArrayList<>();
