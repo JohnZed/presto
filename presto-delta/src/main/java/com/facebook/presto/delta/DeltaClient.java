@@ -57,6 +57,8 @@ public class DeltaClient
 {
     private static final String TABLE_NOT_FOUND_ERROR_TEMPLATE = "Delta table (%s.%s) no longer exists.";
     private static final String LOG_STORE_CONFIG_PREFIX = "io.delta.kernel.logStore.";
+    // Lets the stock delta-storage S3 log store use S3A's start-after listing when Presto's S3 filesystem is not in use.
+    private static final String FAST_S3A_LIST_FROM = "delta.enableFastS3AListFrom";
     private final HdfsEnvironment hdfsEnvironment;
     private final DeltaQuerySnapshotCache snapshotCache;
 
@@ -233,6 +235,7 @@ public class DeltaClient
         for (String scheme : new String[] {"s3", "s3a", "s3n"}) {
             configuration.set(LOG_STORE_CONFIG_PREFIX + scheme + ".impl", PrestoS3LogStore.class.getName());
         }
+        configuration.setBoolean(FAST_S3A_LIST_FROM, true);
         return configuration;
     }
 

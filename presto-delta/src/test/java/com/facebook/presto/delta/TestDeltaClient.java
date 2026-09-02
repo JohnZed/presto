@@ -35,7 +35,9 @@ public class TestDeltaClient
         assertEquals(configured.get("io.delta.kernel.logStore.s3.impl"), PrestoS3LogStore.class.getName());
         assertEquals(configured.get("io.delta.kernel.logStore.s3a.impl"), PrestoS3LogStore.class.getName());
         assertEquals(configured.get("io.delta.kernel.logStore.s3n.impl"), PrestoS3LogStore.class.getName());
+        assertTrue(configured.getBoolean("delta.enableFastS3AListFrom", false));
         assertNull(source.get("io.delta.kernel.logStore.s3.impl"));
+        assertNull(source.get("delta.enableFastS3AListFrom"));
         assertTrue(LogStoreProvider.getLogStore(configured, "s3") instanceof PrestoS3LogStore);
     }
 }
