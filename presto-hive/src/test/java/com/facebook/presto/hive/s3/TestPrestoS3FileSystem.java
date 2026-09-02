@@ -66,6 +66,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.airlift.testing.Assertions.assertInstanceOf;
 import static com.facebook.presto.hive.s3.S3ConfigurationUpdater.S3_ACCESS_KEY;
@@ -722,6 +723,67 @@ public class TestPrestoS3FileSystem
             assertEquals("standardOne", statuses[0].getPath().getName());
             assertEquals("standardTwo", statuses[1].getPath().getName());
         }
+    }
+
+    @Test
+    public void testListFilesFromUsesInclusiveS3StartAfter()
+            throws Exception
+    {
+        Configuration config = new Configuration();
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<String> prefix = new AtomicReference<>();
+        AtomicReference<String> startAfter = new AtomicReference<>();
+
+        try (PrestoS3FileSystem fs = new PrestoS3FileSystem()) {
+            MockAmazonS3 s3 = new MockAmazonS3()
+            {
+                @Override
+                public ListObjectsV2Result listObjectsV2(ListObjectsV2Request request)
+                {
+                    prefix.set(request.getPrefix());
+                    startAfter.set(request.getStartAfter());
+                    ListObjectsV2Result result = new ListObjectsV2Result();
+                    if (calls.getAndIncrement() == 0) {
+                        // The first entry is deliberately before the requested path to verify
+                        // that inclusive semantics do not depend solely on S3 filtering.
+                        result.getObjectSummaries().add(objectSummary("table/_delta_log/00000000000000000019.json"));
+                        result.getObjectSummaries().add(objectSummary("table/_delta_log/00000000000000000020.json"));
+                        result.setTruncated(true);
+                        result.setNextContinuationToken("next");
+                    }
+                    else {
+                        result.getObjectSummaries().add(objectSummary("table/_delta_log/00000000000000000021.json"));
+                    }
+                    return result;
+                }
+            };
+            fs.initialize(new URI("s3://test-bucket/"), config);
+            fs.setS3Client(s3);
+
+            RemoteIterator<LocatedFileStatus> iterator = fs.listFilesFrom(
+                    new Path("s3://test-bucket/table/_delta_log/00000000000000000020"));
+            List<String> names = new ArrayList<>();
+            while (iterator.hasNext()) {
+                names.add(iterator.next().getPath().getName());
+            }
+
+            assertEquals(names, Arrays.asList(
+                    "00000000000000000020.json",
+                    "00000000000000000021.json"));
+            assertEquals(prefix.get(), "table/_delta_log/");
+            assertTrue(startAfter.get().compareTo("table/_delta_log/00000000000000000020") < 0);
+            assertEquals(calls.get(), 2);
+        }
+    }
+
+    private static S3ObjectSummary objectSummary(String key)
+    {
+        S3ObjectSummary object = new S3ObjectSummary();
+        object.setKey(key);
+        object.setSize(1);
+        object.setLastModified(new Date());
+        object.setStorageClass(StorageClass.Standard.toString());
+        return object;
     }
 
     private void testEmptyDirectoryWithContentType(String s3ObjectContentType)

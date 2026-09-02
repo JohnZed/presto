@@ -89,6 +89,7 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Date;
@@ -310,6 +311,34 @@ public class PrestoS3FileSystem
     {
         // Either a single level or full listing, depending on the recursive flag, no "directories" are included
         return new S3ObjectsRemoteIterator(listPrefix(path, OptionalInt.empty(), recursive ? ListingMode.RECURSIVE_FILES_ONLY : ListingMode.SHALLOW_FILES_ONLY));
+    }
+
+    /**
+     * Lists files in the parent directory whose keys are lexicographically greater than or equal to {@code path}.
+     * This avoids enumerating the entire directory when a caller already knows the first key it needs.
+     */
+    public RemoteIterator<LocatedFileStatus> listFilesFrom(Path path)
+    {
+        requireNonNull(path, "path is null");
+        Path parent = requireNonNull(path.getParent(), "path has no parent");
+        String startKey = keyFromPath(path);
+        String prefix = keyFromPath(parent);
+        if (!prefix.isEmpty()) {
+            prefix += PATH_SEPARATOR;
+        }
+
+        ListObjectsV2Request request = new ListObjectsV2Request()
+                .withBucketName(getBucketName(uri))
+                .withPrefix(prefix)
+                .withDelimiter(PATH_SEPARATOR)
+                // S3 excludes StartAfter itself. Use the immediately preceding byte value and
+                // retain the defensive filter below to preserve inclusive listFrom semantics.
+                .withStartAfter(keyBefore(startKey));
+
+        Iterator<LocatedFileStatus> result = Iterators.concat(Iterators.transform(listObjects(request), this::statusFromListing));
+        result = Iterators.filter(result, LocatedFileStatus::isFile);
+        result = Iterators.filter(result, status -> keyFromPath(status.getPath()).compareTo(startKey) >= 0);
+        return new S3ObjectsRemoteIterator(result);
     }
 
     @Override
@@ -578,8 +607,20 @@ public class PrestoS3FileSystem
                 .withDelimiter(mode == ListingMode.RECURSIVE_FILES_ONLY ? null : PATH_SEPARATOR)
                 .withMaxKeys(initialMaxKeys.isPresent() ? initialMaxKeys.getAsInt() : null);
 
+        Iterator<ListObjectsV2Result> listings = listObjects(request);
+
+        Iterator<LocatedFileStatus> result = Iterators.concat(Iterators.transform(listings, this::statusFromListing));
+        if (mode.isFilesOnly()) {
+            //  Even recursive listing can still contain empty "directory" objects, must filter them out
+            result = Iterators.filter(result, LocatedFileStatus::isFile);
+        }
+        return result;
+    }
+
+    private Iterator<ListObjectsV2Result> listObjects(ListObjectsV2Request request)
+    {
         STATS.newListObjectsCall();
-        Iterator<ListObjectsV2Result> listings = new AbstractSequentialIterator<ListObjectsV2Result>(s3.listObjectsV2(request))
+        return new AbstractSequentialIterator<ListObjectsV2Result>(s3.listObjectsV2(request))
         {
             @Override
             protected ListObjectsV2Result computeNext(ListObjectsV2Result previous)
@@ -594,13 +635,17 @@ public class PrestoS3FileSystem
                         .withContinuationToken(previous.getNextContinuationToken()));
             }
         };
+    }
 
-        Iterator<LocatedFileStatus> result = Iterators.concat(Iterators.transform(listings, this::statusFromListing));
-        if (mode.isFilesOnly()) {
-            //  Even recursive listing can still contain empty "directory" objects, must filter them out
-            result = Iterators.filter(result, LocatedFileStatus::isFile);
+    private static String keyBefore(String key)
+    {
+        byte[] bytes = key.getBytes(StandardCharsets.UTF_8);
+        checkArgument(bytes.length > 0, "key is empty");
+        if (bytes[bytes.length - 1] > 0) {
+            bytes[bytes.length - 1]--;
+            return new String(bytes, StandardCharsets.UTF_8);
         }
-        return result;
+        return new String(bytes, 0, bytes.length - 1, StandardCharsets.UTF_8);
     }
 
     private Iterator<LocatedFileStatus> statusFromListing(ListObjectsV2Result listing)
