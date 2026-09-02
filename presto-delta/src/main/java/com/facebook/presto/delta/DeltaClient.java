@@ -23,11 +23,9 @@ import com.facebook.presto.spi.StandardErrorCode;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import jakarta.inject.Inject;
@@ -36,16 +34,15 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.facebook.presto.delta.DeltaTable.DataFormat.PARQUET;
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.lang.String.format;
 import static java.util.Locale.US;
 import static java.util.Objects.requireNonNull;
@@ -287,43 +284,33 @@ public class DeltaClient
     /**
      * Utility method that returns the columns in given Delta metadata. Returned columns include regular and partition types.
      * Data type from Delta is mapped to appropriate Presto data type.
+     * <p>
+     * Partition columns come from the snapshot metadata rather than from replaying the log to find an AddFile.
+     * That keeps table resolution independent of the number of files and works when column mapping stores
+     * partition values under physical names.
      */
-    private static List<DeltaColumn> getSchema(DeltaConfig config, SchemaTableName tableName, Engine deltaEngine,
-                                               Snapshot snapshot)
+    static List<DeltaColumn> getSchema(DeltaConfig config, SchemaTableName tableName, Engine deltaEngine, Snapshot snapshot)
     {
-        try (CloseableIterator<FilteredColumnarBatch> columnBatches = snapshot.getScanBuilder().build()
-                    .getScanFiles(deltaEngine)) {
-            Row row = null;
-            while (columnBatches.hasNext()) {
-                CloseableIterator<Row> rows = columnBatches.next().getRows();
-                if (rows.hasNext()) {
-                    row = rows.next();
-                    break;
-                }
-            }
-            Map<String, String> partitionValues = row != null ?
-                    InternalScanFileUtils.getPartitionValues(row) : new HashMap<>(0);
-            return snapshot.getSchema().fields().stream()
-                    .map(field -> {
-                        String columnName = config.isCaseSensitivePartitionsEnabled() ? field.getName() :
-                                field.getName().toLowerCase(US);
-                        TypeSignature prestoType = DeltaTypeUtils.convertDeltaDataTypePrestoDataType(tableName,
-                                columnName, field.getDataType());
-                        return new DeltaColumn(
-                                DeltaColumnMetadataUtil.getColumnIdFromMetadata(field.getMetadata()),
-                                DeltaColumnMetadataUtil.getPhysicalNameFromMetadata(field.getMetadata()),
-                                columnName,
-                                prestoType,
-                                field.isNullable(),
-                                partitionValues.containsKey(columnName));
-                    }).collect(Collectors.toList());
-        }
-        catch (TableNotFoundException e) {
-            throw new PrestoException(StandardErrorCode.NOT_FOUND,
-                    format(TABLE_NOT_FOUND_ERROR_TEMPLATE, tableName.getSchemaName(), tableName.getTableName()));
-        }
-        catch (IOException e) {
-            throw new UncheckedIOException("Could not close columnar batch row", e);
-        }
+        Set<String> partitionColumns = snapshot.getPartitionColumnNames().stream()
+                .map(name -> normalizeColumnName(config, name))
+                .collect(toImmutableSet());
+        return snapshot.getSchema().fields().stream()
+                .map(field -> {
+                    String columnName = normalizeColumnName(config, field.getName());
+                    TypeSignature prestoType = DeltaTypeUtils.convertDeltaDataTypePrestoDataType(tableName,
+                            columnName, field.getDataType());
+                    return new DeltaColumn(
+                            DeltaColumnMetadataUtil.getColumnIdFromMetadata(field.getMetadata()),
+                            DeltaColumnMetadataUtil.getPhysicalNameFromMetadata(field.getMetadata()),
+                            columnName,
+                            prestoType,
+                            field.isNullable(),
+                            partitionColumns.contains(columnName));
+                }).collect(Collectors.toList());
+    }
+
+    private static String normalizeColumnName(DeltaConfig config, String columnName)
+    {
+        return config.isCaseSensitivePartitionsEnabled() ? columnName : columnName.toLowerCase(US);
     }
 }
