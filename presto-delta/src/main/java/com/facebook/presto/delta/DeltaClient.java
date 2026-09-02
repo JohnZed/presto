@@ -31,6 +31,7 @@ import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import jakarta.inject.Inject;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
@@ -55,6 +56,7 @@ import static java.util.Objects.requireNonNull;
 public class DeltaClient
 {
     private static final String TABLE_NOT_FOUND_ERROR_TEMPLATE = "Delta table (%s.%s) no longer exists.";
+    private static final String LOG_STORE_CONFIG_PREFIX = "io.delta.kernel.logStore.";
     private final HdfsEnvironment hdfsEnvironment;
 
     @Inject
@@ -185,12 +187,21 @@ public class DeltaClient
             if (!fileSystem.isDirectory(tableLocation)) {
                 return Optional.empty();
             }
-            return Optional.of(DefaultEngine.create(fileSystem.getConf()));
+            return Optional.of(DefaultEngine.create(configureDeltaLogStore(fileSystem.getConf())));
         }
         catch (IOException ioException) {
             throw new PrestoException(DeltaErrorCode.DELTA_ERROR_LOADING_METADATA,
                     "Failed to load Delta table: " + ioException.getMessage(), ioException);
         }
+    }
+
+    static Configuration configureDeltaLogStore(Configuration source)
+    {
+        Configuration configuration = new Configuration(requireNonNull(source, "source is null"));
+        for (String scheme : new String[] {"s3", "s3a", "s3n"}) {
+            configuration.set(LOG_STORE_CONFIG_PREFIX + scheme + ".impl", PrestoS3LogStore.class.getName());
+        }
+        return configuration;
     }
 
     private Table loadDeltaTable(String tableLocation, Engine deltaEngine)
