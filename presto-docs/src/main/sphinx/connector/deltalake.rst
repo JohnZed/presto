@@ -52,6 +52,12 @@ Property Name                                   Description                     
                                                 ``true``.
 ``delta.case-sensitive-partitions-enabled``     Allows matching the names of partitioned columns in a     ``true``
                                                 case-sensitive manner.
+``delta.metadata-cache-ttl``                    How long resolved Delta snapshots are cached across       ``30m``
+                                                queries. Queries always check the transaction log for
+                                                commits newer than the cached snapshot, so the cache
+                                                only avoids repeated snapshot construction. Set to
+                                                ``0s`` to disable the cache.
+``delta.metadata-cache-max-size``               Maximum number of Delta snapshots kept in the cache.      ``1000``
 =============================================== ========================================================= ============
 
 Delta Lake connector reuses many of the modules existing in Hive connector.

@@ -58,12 +58,14 @@ public class DeltaClient
     private static final String FAST_S3A_LIST_FROM = "delta.enableFastS3AListFrom";
     private final HdfsEnvironment hdfsEnvironment;
     private final DeltaQuerySnapshotCache snapshotCache;
+    private final DeltaSnapshotCache sharedSnapshotCache;
 
     @Inject
-    public DeltaClient(HdfsEnvironment hdfsEnvironment, DeltaQuerySnapshotCache snapshotCache)
+    public DeltaClient(HdfsEnvironment hdfsEnvironment, DeltaQuerySnapshotCache snapshotCache, DeltaSnapshotCache sharedSnapshotCache)
     {
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
         this.snapshotCache = requireNonNull(snapshotCache, "snapshotCache is null");
+        this.sharedSnapshotCache = requireNonNull(sharedSnapshotCache, "sharedSnapshotCache is null");
     }
 
     /**
@@ -108,7 +110,7 @@ public class DeltaClient
         }
 
         Table deltaTable = loadDeltaTable(location.toString(), deltaEngine.get());
-        Snapshot snapshot = getSnapshot(deltaTable, deltaEngine.get(), schemaTableName, snapshotId,
+        Snapshot snapshot = getSnapshot(deltaTable, deltaEngine.get(), tableLocation, schemaTableName, snapshotId,
                 snapshotAsOfTimestampMillis);
         snapshotCache.putSnapshot(session.getQueryId(), tableLocation, snapshot.getVersion(), deltaEngine.get(), snapshot);
         return Optional.of(new DeltaTable(
@@ -122,6 +124,7 @@ public class DeltaClient
     private Snapshot getSnapshot(
             Table deltaTable,
             Engine deltaEngine,
+            String tableLocation,
             SchemaTableName schemaTableName,
             Optional<Long> snapshotId,
             Optional<Long> snapshotAsOfTimestampMillis)
@@ -130,23 +133,25 @@ public class DeltaClient
         // Lock the snapshot version here and use it later in the rest of the query (such as fetching file list etc.).
         // If we don't lock the snapshot version here, the query may end up with schema from one version and data files from another
         // version when the underlying delta table is changing while the query is running.
+        // Snapshots are immutable per version, so they are shared across queries; the latest version is revalidated
+        // against the transaction log tail on every lookup.
         Snapshot snapshot;
         if (snapshotId.isPresent()) {
-            snapshot = getSnapshotById(deltaTable, deltaEngine, snapshotId.get(), schemaTableName);
+            snapshot = sharedSnapshotCache.getSnapshotAtVersion(
+                    tableLocation,
+                    snapshotId.get(),
+                    () -> getSnapshotById(deltaTable, deltaEngine, snapshotId.get(), schemaTableName));
         }
         else if (snapshotAsOfTimestampMillis.isPresent()) {
-            snapshot = getSnapshotAsOfTimestamp(deltaTable, deltaEngine,
-                    snapshotAsOfTimestampMillis.get(), schemaTableName);
+            snapshot = sharedSnapshotCache.cacheSnapshot(
+                    tableLocation,
+                    getSnapshotAsOfTimestamp(deltaTable, deltaEngine, snapshotAsOfTimestampMillis.get(), schemaTableName));
         }
         else {
-            try {
-                snapshot = deltaTable.getLatestSnapshot(deltaEngine); // get the latest snapshot
-            }
-            catch (TableNotFoundException e) {
-                throw new PrestoException(StandardErrorCode.NOT_FOUND,
-                        format("Could not move to latest snapshot on table '%s.%s'", schemaTableName.getSchemaName(),
-                                schemaTableName.getTableName()), e);
-            }
+            snapshot = sharedSnapshotCache.getLatestSnapshot(
+                    tableLocation,
+                    deltaEngine,
+                    () -> getLatestSnapshot(deltaTable, deltaEngine, schemaTableName));
         }
 
         if (snapshot instanceof SnapshotImpl) {
@@ -195,7 +200,10 @@ public class DeltaClient
                     format("Could not obtain Delta engine in '%s'", deltaTable.getTableLocation()));
         }
         Table sourceTable = loadDeltaTable(deltaTable.getTableLocation(), deltaEngine.get());
-        Snapshot snapshot = sourceTable.getSnapshotAsOfVersion(deltaEngine.get(), snapshotId);
+        Snapshot snapshot = sharedSnapshotCache.getSnapshotAtVersion(
+                deltaTable.getTableLocation(),
+                snapshotId,
+                () -> sourceTable.getSnapshotAsOfVersion(deltaEngine.get(), snapshotId));
         return snapshotCache.putSnapshot(session.getQueryId(), deltaTable.getTableLocation(), snapshotId, deltaEngine.get(), snapshot);
     }
 
@@ -239,6 +247,18 @@ public class DeltaClient
     private Table loadDeltaTable(String tableLocation, Engine deltaEngine)
     {
         return Table.forPath(deltaEngine, tableLocation);
+    }
+
+    private static Snapshot getLatestSnapshot(Table deltaTable, Engine deltaEngine, SchemaTableName schemaTableName)
+    {
+        try {
+            return deltaTable.getLatestSnapshot(deltaEngine);
+        }
+        catch (TableNotFoundException e) {
+            throw new PrestoException(StandardErrorCode.NOT_FOUND,
+                    format("Could not move to latest snapshot on table '%s.%s'", schemaTableName.getSchemaName(),
+                            schemaTableName.getTableName()), e);
+        }
     }
 
     private static Snapshot getSnapshotById(Table deltaTable, Engine deltaEngine, long snapshotId, SchemaTableName schemaTableName)

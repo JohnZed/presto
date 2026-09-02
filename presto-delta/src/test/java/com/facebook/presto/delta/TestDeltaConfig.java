@@ -14,10 +14,13 @@
 package com.facebook.presto.delta;
 
 import com.facebook.airlift.configuration.testing.ConfigAssertions;
+import com.facebook.airlift.units.Duration;
 import com.google.common.collect.ImmutableMap;
 import org.testng.annotations.Test;
 
 import java.util.Map;
+
+import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class TestDeltaConfig
 {
@@ -27,7 +30,9 @@ public class TestDeltaConfig
         ConfigAssertions.assertRecordedDefaults(ConfigAssertions.recordDefaults(DeltaConfig.class)
                 .setMaxSplitsBatchSize(200)
                 .setParquetDereferencePushdownEnabled(true)
-                .setCaseSensitivePartitionsEnabled(true));
+                .setCaseSensitivePartitionsEnabled(true)
+                .setMetadataCacheTtl(new Duration(30, MINUTES))
+                .setMetadataCacheMaxSize(1000));
     }
 
     @Test
@@ -37,12 +42,16 @@ public class TestDeltaConfig
                 .put("delta.max-splits-batch-size", "400")
                 .put("delta.parquet-dereference-pushdown-enabled", "false")
                 .put("delta.case-sensitive-partitions-enabled", "false")
+                .put("delta.metadata-cache-ttl", "5m")
+                .put("delta.metadata-cache-max-size", "10")
                 .build();
 
         DeltaConfig expected = new DeltaConfig()
                 .setMaxSplitsBatchSize(400)
                 .setParquetDereferencePushdownEnabled(false)
-                .setCaseSensitivePartitionsEnabled(false);
+                .setCaseSensitivePartitionsEnabled(false)
+                .setMetadataCacheTtl(new Duration(5, MINUTES))
+                .setMetadataCacheMaxSize(10);
 
         ConfigAssertions.assertFullMapping(properties, expected);
     }

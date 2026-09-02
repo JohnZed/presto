@@ -14,13 +14,20 @@
 package com.facebook.presto.delta;
 
 import com.facebook.airlift.configuration.Config;
+import com.facebook.airlift.configuration.ConfigDescription;
+import com.facebook.airlift.units.Duration;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+
+import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class DeltaConfig
 {
     private int maxSplitsBatchSize = 200;
     private boolean parquetDereferencePushdownEnabled = true;
     private boolean caseSensitivePartitionsEnabled = true;
+    private Duration metadataCacheTtl = new Duration(30, MINUTES);
+    private long metadataCacheMaxSize = 1000;
 
     @NotNull
     public boolean isParquetDereferencePushdownEnabled()
@@ -56,6 +63,35 @@ public class DeltaConfig
     public DeltaConfig setCaseSensitivePartitionsEnabled(boolean caseSensitivePartitionsEnabled)
     {
         this.caseSensitivePartitionsEnabled = caseSensitivePartitionsEnabled;
+        return this;
+    }
+
+    @NotNull
+    public Duration getMetadataCacheTtl()
+    {
+        return metadataCacheTtl;
+    }
+
+    @Config("delta.metadata-cache-ttl")
+    @ConfigDescription("How long resolved Delta snapshots stay cached across queries. Latest-snapshot lookups still " +
+            "check the transaction log tail for new commits. Set to 0s to disable the cache.")
+    public DeltaConfig setMetadataCacheTtl(Duration metadataCacheTtl)
+    {
+        this.metadataCacheTtl = metadataCacheTtl;
+        return this;
+    }
+
+    @Min(0)
+    public long getMetadataCacheMaxSize()
+    {
+        return metadataCacheMaxSize;
+    }
+
+    @Config("delta.metadata-cache-max-size")
+    @ConfigDescription("Maximum number of Delta snapshots cached across queries")
+    public DeltaConfig setMetadataCacheMaxSize(long metadataCacheMaxSize)
+    {
+        this.metadataCacheMaxSize = metadataCacheMaxSize;
         return this;
     }
 }
