@@ -31,6 +31,7 @@
 #ifdef PRESTO_ENABLE_CUDF
 #include "velox/experimental/cudf/CudfConfig.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveConnector.h"
+#include "velox/experimental/cudf/connectors/hive/delta/CudfDeltaConnector.h"
 #endif
 
 namespace facebook::presto {
@@ -186,10 +187,17 @@ void registerConnectorFactories() {
       std::make_shared<
           facebook::velox::connector::tpch::TpchConnectorFactory>());
 
-  // Register Delta Lake connector factory (using Hive implementation)
+#ifdef PRESTO_ENABLE_CUDF
+  // Register the cuDF Delta Lake connector factory.
+  facebook::presto::registerConnectorFactory(std::make_shared<
+      facebook::velox::cudf_velox::connector::hive::delta::
+          CudfDeltaConnectorFactory>());
+#else
+  // Register Delta Lake connector factory using the CPU Hive implementation.
   facebook::presto::registerConnectorFactory(
       std::make_shared<facebook::velox::connector::hive::HiveConnectorFactory>(
           kDeltaConnectorName));
+#endif
 
   // Register Iceberg connector factory (using Hive implementation)
   facebook::presto::registerConnectorFactory(
