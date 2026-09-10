@@ -37,7 +37,8 @@ RUN !(LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/lib:/usr/local/lib64 ldd /pr
     LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/lib:/usr/local/lib64 ldd /prestissimo/${BUILD_BASE_DIR}/${BUILD_DIR}/presto_cpp/main/presto_server | awk 'NF == 4 { system("cp " $3 " /runtime-libraries") }'
 RUN /bin/bash -c 'if [[ "${EXTRA_CMAKE_FLAGS}" =~ -DPRESTO_ENABLE_CUDF=ON ]] || [[ ",${PRESTO_OPTIONAL_FEATURES}," =~ ,cudf, ]]; then \
       cp -a /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so* /runtime-libraries/ && \
-      cp -a /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc-builtins.so* /runtime-libraries/; \
+      cp -a /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc-builtins.so* /runtime-libraries/ && \
+      cp -a /usr/local/cuda/targets/x86_64-linux/lib/libnvJitLink.so* /runtime-libraries/; \
     fi'
 
 #/////////////////////////////////////////////
