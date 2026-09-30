@@ -33,6 +33,7 @@ import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.testing.QueryRunner;
 import com.facebook.presto.tests.DistributedQueryRunner;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Ulimit;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
@@ -1049,6 +1050,7 @@ public class PrestoNativeQueryRunnerUtils
                 if (enableCudf) {
                     hostConfig.withRuntime("nvidia");
                 }
+                hostConfig.withUlimits(new Ulimit[] {new Ulimit("nofile", 65536L, 65536L)});
                 // Opt the container out of SELinux confinement (e.g. Podman on Fedora). Without
                 // this, the container process (container_t) is denied access to the bind-mounted
                 // host files, which are labelled user_tmp_t (see AVC "denied { open }" errors).

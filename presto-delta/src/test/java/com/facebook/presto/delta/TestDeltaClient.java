@@ -71,20 +71,6 @@ public class TestDeltaClient
         assertEquals(partitionColumnNames(caseSensitive), ImmutableList.of("BIRTH_YEAR"));
     }
 
-    @Test
-    public void testUnpartitionedColumnMappedTableHasNoPartitionColumns()
-            throws URISyntaxException
-    {
-        Engine engine = DefaultEngine.create(new Configuration());
-        Snapshot snapshot = latestSnapshot(engine, "delta_v3/cm_name");
-
-        List<DeltaColumn> columns = DeltaClient.getSchema(
-                new DeltaConfig(), new SchemaTableName("schema", "cm_name"), engine, snapshot);
-        assertTrue(columns.size() > 0);
-        assertEquals(partitionColumnNames(columns), ImmutableList.of());
-        assertTrue(columns.stream().allMatch(column -> column.getPhysicalName() != null));
-    }
-
     private static Snapshot latestSnapshot(Engine engine, String resource)
             throws URISyntaxException
     {

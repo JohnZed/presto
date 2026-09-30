@@ -192,6 +192,15 @@ public class TestDeltaScanOptimizations
         // make sure to check the query output before the query plan
         assertQuery(testQuery, expResultsQuery);
 
+        assertDeltaQueryPlan(tableName, testQuery, expectedConstraint, expectedEnforcedConstraint);
+    }
+
+    protected void assertDeltaQueryPlan(
+            String tableName,
+            String testQuery,
+            Map<String, Domain> expectedConstraint,
+            Map<String, Domain> expectedEnforcedConstraint)
+    {
         // verify the plan contains filter pushed down into scan appropriately
         assertPlan(withDereferencePushdownEnabled(),
                 testQuery,
@@ -254,7 +263,7 @@ public class TestDeltaScanOptimizations
                 .get();
     }
 
-    private Session withDereferencePushdownEnabled()
+    protected Session withDereferencePushdownEnabled()
     {
         return Session.builder(getQueryRunner().getDefaultSession())
                 .setCatalogSessionProperty(DELTA_CATALOG, PARQUET_DEREFERENCE_PUSHDOWN_ENABLED, "true")
