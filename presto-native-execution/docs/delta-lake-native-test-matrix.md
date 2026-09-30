@@ -1,6 +1,6 @@
 # Native Delta Lake Read Compatibility Matrix
 
-Status: **validated on `exp-delta-lake`**
+Status: **validated on `delta-lake-native-reads-review`**
 
 This matrix defines the tested read contract shared by the Java Delta
 coordinator, CPU-native workers, and cuDF-native workers.
@@ -30,16 +30,19 @@ coordinator, CPU-native workers, and cuDF-native workers.
 
 | Suite | Java | CPU-native | GPU-native |
 | --- | ---: | ---: | ---: |
-| Complete `presto-delta` module | 82 | — | — |
-| Delta integration wrapper | — | 20 | 18 |
+| Complete `presto-delta` module | 81 | — | — |
+| Delta integration wrapper | — | 16 | 14 |
 | Scan optimizations wrapper | — | 14 | 14 |
 | Incremental update wrapper | — | 6 | 6 |
 | Uppercase partition wrapper | — | 4 | 4 |
-| Column mapping wrapper | — | 7 | 7 |
-| Native compatibility total | — | 51 | 49 |
+| Column mapping wrapper | — | 4 | 4 |
+| Native compatibility total | — | 44 | 42 |
 | Native protocol/adapter unit suite | — | 25 | Compiled with GPU-specific split assertions |
 
-All listed executed tests completed with zero failures and zero errors.
+The Java and native compatibility suites were rerun on this branch with zero
+failures and zero errors. Metadata/DDL cases run only in Java. The CPU run also
+passed the separate missing-field-ID Iceberg regression. Protocol/adapter unit
+and build results are from the earlier validation of unchanged native sources.
 
 ## Path and split contract
 

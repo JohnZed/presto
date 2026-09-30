@@ -1,11 +1,24 @@
 # Native Delta Lake Read Support
 
-Status: **implemented and validated on `exp-delta-lake`**
+Status: **validated on `delta-lake-native-reads-review`**
 
 This document records the implemented design for read-only Delta Lake support
 in Prestissimo CPU and Velox-cuDF workers. Delta writes, deletion-vector
 application, and the separate GPU timestamp-with-time-zone fix remain out of
 scope.
+
+## Review scope
+
+This branch starts at `f60386fccf` and includes the shared Java/CPU/GPU test
+cleanup. The six later performance commits remain on `delta-lake-on-iceberg`:
+keyed S3 log listing, filesystem-wrapper handling, per-query and cross-query
+snapshot caching, and partition-schema discovery from snapshot metadata.
+`DeltaClient` and the S3 filesystem retain their upstream implementations;
+the Java production changes are limited to `DeltaSplit` and `DeltaSplitManager`.
+
+The Velox submodule retains the compatibility fix at `a729ad1fcd`, which falls
+back to column names for Parquet files without field IDs. This supports the
+separate Iceberg regression fixture; it is not a snapshot or S3 optimization.
 
 ## Outcome
 
@@ -22,7 +35,7 @@ moves data-file I/O to the native workers:
    delete-free scan path.
 
 No Java worker is present on either native data path. No Delta log reader was
-implemented in C++, and no production Velox source change was required.
+implemented in C++; the Delta adapter reuses the existing Velox/cuDF readers.
 
 ## Implemented architecture
 
@@ -130,19 +143,21 @@ regular and partition columns, so partition fields are not read from Parquet.
 | Partition evolution | `67283a0ac0` | Missing current partition columns injected as null |
 | GPU integration | `b370117c5f` | cuDF runner plumbing and Java-compatible GPU suites |
 
-No commit has been pushed.
+The review branch is prepared locally on labwork.
 
 ## Test plan and verified results
 
-Tests were implemented and run after each phase, not deferred until the end.
-The final current-image regression results are:
+The review branch was checked with the full Java Delta module and the CPU/GPU
+compatibility suites using existing worker images with identical native sources.
+Protocol/adapter unit and production-build results below are retained from the
+earlier validation of those unchanged native sources:
 
 | Layer | Result |
 | --- | ---: |
-| Full Java `presto-delta` module | 82 passed |
+| Full Java `presto-delta` module | 81 passed |
 | Native protocol/adapter unit suite | 25 passed |
-| CPU-native Java compatibility suites | 51 passed |
-| GPU-native Java compatibility suites | 49 passed |
+| CPU-native Java compatibility suites | 44 passed |
+| GPU-native Java compatibility suites | 42 passed |
 | CPU production worker build | Passed |
 | GPU production worker build | Passed |
 
@@ -150,12 +165,16 @@ The native compatibility totals comprise:
 
 | Java suite reused by native tests | CPU | GPU |
 | --- | ---: | ---: |
-| Delta integration | 20 | 18 |
+| Delta integration | 16 | 14 |
 | Scan optimizations | 14 | 14 |
 | Incremental update reads | 6 | 6 |
 | Uppercase partition columns | 4 | 4 |
-| Column mapping | 7 | 7 |
-| Total | 51 | 49 |
+| Column mapping | 4 | 4 |
+| Total | 44 | 42 |
+
+Metadata and DDL checks run in Java only. The Java column-mapping schema test
+also checks partition classification and physical names. The CPU run separately
+passes `TestNativeParquetWithoutFieldIds` in addition to the 44 Delta cases.
 
 The CPU and GPU suites reuse Java fixtures, data providers, and expected
 results through inheritance. Native-only unit tests cover protocol routing,
