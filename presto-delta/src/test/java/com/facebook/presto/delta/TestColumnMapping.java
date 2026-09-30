@@ -14,19 +14,24 @@
 package com.facebook.presto.delta;
 
 import com.facebook.presto.Session;
+import com.facebook.presto.spi.plan.TableScanNode;
 import com.facebook.presto.testing.MaterializedResult;
 import com.facebook.presto.testing.MaterializedRow;
 import org.testng.annotations.Test;
 
 import java.time.LocalDate;
+import java.util.List;
 
+import static com.facebook.presto.spi.WarningCollector.NOOP;
+import static com.facebook.presto.sql.planner.optimizations.PlanNodeSearcher.searchFrom;
 import static java.lang.String.format;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
 
 public class TestColumnMapping
         extends AbstractDeltaDistributedQueryTestBase
 {
-    @Test
+    @Test(groups = "delta-metadata")
     public void testColumnMappingSchema()
     {
         Session session = Session.builder(getSession()).build();
@@ -39,6 +44,16 @@ public class TestColumnMapping
         assertEquals(result.getMaterializedRows().get(2).getField(0), "family_name");
         assertEquals(result.getMaterializedRows().get(3).getField(0), "email");
         assertEquals(result.getMaterializedRows().get(4).getField(0), "signup_date");
+
+        TableScanNode tableScan = (TableScanNode) searchFrom(getQueryRunner().createPlan(
+                session,
+                format("SELECT * FROM \"%s\".\"%s\"", PATH_SCHEMA, goldenTablePathWithPrefix(DELTA_V3, "cm_name")),
+                NOOP).getRoot())
+                .where(TableScanNode.class::isInstance)
+                .findOnlyElement();
+        List<DeltaColumn> columns = ((DeltaTableHandle) tableScan.getTable().getConnectorHandle()).getDeltaTable().getColumns();
+        assertTrue(columns.stream().noneMatch(DeltaColumn::isPartition));
+        assertTrue(columns.stream().allMatch(column -> column.getPhysicalName() != null));
     }
     @Test
     public void testColumnMappingByNameRenamedColumns()
@@ -72,7 +87,7 @@ public class TestColumnMapping
         assertEquals(result.getMaterializedRows().get(4), row5);
     }
 
-    @Test
+    @Test(groups = "delta-metadata")
     public void testColumnMappingRenameWithSpaceAndSpecialCharactersSchema()
     {
         Session session = Session.builder(getSession()).build();
@@ -104,7 +119,7 @@ public class TestColumnMapping
         assertEquals(result.getMaterializedRows().get(4), row5);
     }
 
-    @Test
+    @Test(groups = "delta-metadata")
     public void testColumnMappingDroppedColumnsSchema()
     {
         Session session = Session.builder(getSession()).build();

@@ -36,19 +36,9 @@ public class TestPrestoNativeDeltaIntegration
     }
 
     @Override
-    @Test(dataProvider = "deltaReaderVersions")
-    public void readPartitionedTableAllDataTypes(String version)
+    protected boolean supportsTimestampWithTimeZone()
     {
-        String testQuery = "SELECT as_int, as_long, as_byte, as_short, as_boolean, as_float, as_double, " +
-                "as_string, as_date, as_big_decimal, value FROM \"" + getVersionPrefix(version) +
-                "data-reader-partition-values\"";
-        String expectedQuery = "SELECT * FROM VALUES " +
-                "(0, cast(0 AS bigint), cast(0 AS smallint), cast(0 AS tinyint), true, 0.0, " +
-                "cast(0.0 AS double), '0', DATE '2021-09-08', cast(0 AS decimal), '0'), " +
-                "(1, cast(1 AS bigint), cast(1 AS smallint), cast(1 AS tinyint), false, 1.0, " +
-                "cast(1.0 AS double), '1', DATE '2021-09-08', cast(1 AS decimal), '1'), " +
-                "(null, null, null, null, null, null, null, null, null, null, '2')";
-        assertQuery(testQuery, expectedQuery);
+        return false;
     }
 
     @Override

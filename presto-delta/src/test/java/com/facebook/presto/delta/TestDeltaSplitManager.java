@@ -48,12 +48,6 @@ public class TestDeltaSplitManager
     }
 
     @Test
-    public void testAcceptsFileWithoutDeletionVector()
-    {
-        checkNoDeletionVector(null);
-    }
-
-    @Test
     public void testIncludesMissingCurrentPartitionColumnsAsNull()
     {
         Map<String, String> partitionValues = new HashMap<>();

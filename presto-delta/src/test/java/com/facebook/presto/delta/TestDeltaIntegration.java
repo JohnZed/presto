@@ -18,6 +18,8 @@ import com.facebook.presto.common.type.TimeZoneKey;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.testing.MaterializedResult;
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import org.testng.annotations.Test;
 
 import java.io.File;
@@ -27,9 +29,11 @@ import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_TABLE_PROPERTY;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.lang.String.format;
 import static org.testng.Assert.assertEquals;
 
@@ -55,30 +59,43 @@ public class TestDeltaIntegration
     @Test(dataProvider = "deltaReaderVersions")
     public void readArrayTypeData(String version)
     {
-        // Test reading following array elements with type
-        // (all integers, float, double, decimal, boolean, varchar, varbinary)
-        String testQuery =
-                format("SELECT * FROM \"%s\".\"%s\"", PATH_SCHEMA, goldenTablePathWithPrefix(version,
-                        "data-reader-array-primitives"));
+        List<String> columns = arrayColumns();
+        String testQuery = format("SELECT %s FROM \"%s\".\"%s\"",
+                Joiner.on(", ").join(columns), PATH_SCHEMA,
+                goldenTablePathWithPrefix(version, "data-reader-array-primitives"));
 
-        // Create query for the expected results.
         List<String> expRows = new ArrayList<>();
         for (byte i = 0; i < 10; i++) {
-            expRows.add(format("SELECT " +
-                    "   array[cast(%s as integer)]," +
-                    "   array[cast(%s as bigint)]," +
-                    "   array[cast(%s as tinyint)]," +
-                    "   array[cast(%s as smallint)]," +
-                    "   array[%s]," +
-                    "   array[cast(%s as real)]," +
-                    "   array[cast(%s as double)], " +
-                    "   array['%s'], " +
-                    "   array[cast(X'0%s0%s' as varbinary)], " +
-                    "   array[cast(%s as decimal)]", i, i, i, i, (i % 2 == 0 ? "true" : "false"), i, i, i, i, i, i));
+            Map<String, String> values = ImmutableMap.<String, String>builder()
+                    .put("as_array_int", format("array[cast(%s as integer)]", i))
+                    .put("as_array_long", format("array[cast(%s as bigint)]", i))
+                    .put("as_array_byte", format("array[cast(%s as tinyint)]", i))
+                    .put("as_array_short", format("array[cast(%s as smallint)]", i))
+                    .put("as_array_boolean", format("array[%s]", i % 2 == 0 ? "true" : "false"))
+                    .put("as_array_float", format("array[cast(%s as real)]", i))
+                    .put("as_array_double", format("array[cast(%s as double)]", i))
+                    .put("as_array_string", format("array['%s']", i))
+                    .put("as_array_binary", format("array[cast(X'0%s0%s' as varbinary)]", i, i))
+                    .put("as_array_big_decimal", format("array[cast(%s as decimal)]", i))
+                    .build();
+            expRows.add("SELECT " + Joiner.on(", ").join(columns.stream()
+                    .map(values::get)
+                    .collect(toImmutableList())));
         }
-        String expResultsQuery = Joiner.on(" UNION ").join(expRows);
+        assertQuery(testQuery, Joiner.on(" UNION ").join(expRows));
+    }
 
-        assertQuery(testQuery, expResultsQuery);
+    protected List<String> arrayColumns()
+    {
+        return ImmutableList.of(
+                "as_array_int", "as_array_long", "as_array_byte", "as_array_short",
+                "as_array_boolean", "as_array_float", "as_array_double", "as_array_string",
+                "as_array_binary", "as_array_big_decimal");
+    }
+
+    protected boolean supportsTimestampWithTimeZone()
+    {
+        return true;
     }
 
     @Test(dataProvider = "deltaReaderVersions")
@@ -209,7 +226,10 @@ public class TestDeltaIntegration
     @Test(dataProvider = "deltaReaderVersions")
     public void readPartitionedTableAllDataTypes(String version)
     {
-        String testQuery = "SELECT * FROM \"" + getVersionPrefix(version) +
+        String projection = supportsTimestampWithTimeZone() ? "*" :
+                "as_int, as_long, as_byte, as_short, as_boolean, as_float, as_double, " +
+                        "as_string, as_date, as_big_decimal, value";
+        String testQuery = "SELECT " + projection + " FROM \"" + getVersionPrefix(version) +
                 "data-reader-partition-values\"";
         String expResultsQuery = "SELECT * FROM VALUES" +
                 "( 0," +
@@ -221,7 +241,7 @@ public class TestDeltaIntegration
                 "  cast(0.0 as double), " +
                 "  '0', " +
                 "  DATE '2021-09-08', " +
-                "  TIMESTAMP WITH TIME ZONE '2021-09-08 11:11:11 UTC', " +
+                (supportsTimestampWithTimeZone() ? "  TIMESTAMP WITH TIME ZONE '2021-09-08 11:11:11 UTC', " : "") +
                 "  cast(0 as decimal)," +
                 "  '0'" + // regular column
                 "), " +
@@ -234,7 +254,7 @@ public class TestDeltaIntegration
                 "  cast(1.0 as double), " +
                 "  '1', " +
                 "  DATE '2021-09-08', " +
-                "  TIMESTAMP WITH TIME ZONE '2021-09-08 11:11:11 UTC', " +
+                (supportsTimestampWithTimeZone() ? "  TIMESTAMP WITH TIME ZONE '2021-09-08 11:11:11 UTC', " : "") +
                 "  cast(1 as decimal), " +
                 "  '1'" + // regular column
                 "), " +
@@ -248,7 +268,7 @@ public class TestDeltaIntegration
                 "  null, " +
                 "  null, " +
                 "  null, " +
-                "  null, " +
+                (supportsTimestampWithTimeZone() ? "  null, " : "") +
                 "  '2'" + // regular column
                 ")";
         assertQuery(testQuery, expResultsQuery);
@@ -342,7 +362,7 @@ public class TestDeltaIntegration
                 FileTime.from(commitTimeMillis, TimeUnit.MILLISECONDS));
     }
 
-    @Test(dataProvider = "deltaReaderVersions")
+    @Test(dataProvider = "deltaReaderVersions", groups = "delta-metadata")
     public void testShowCreateTable(String deltaVersion)
     {
         String tableName = deltaVersion + "/data-reader-primitives";
@@ -371,7 +391,7 @@ public class TestDeltaIntegration
         assertEquals(showCreateTableCommandResult, expectedSqlCommand);
     }
 
-    @Test
+    @Test(groups = "delta-metadata")
     public void testCreateTablePointingToNonExistentStorageLocation()
     {
         PrestoException expectedException = new PrestoException(INVALID_TABLE_PROPERTY,
@@ -386,7 +406,7 @@ public class TestDeltaIntegration
         }
     }
 
-    @Test
+    @Test(groups = "delta-metadata")
     public void testCreateTablePointingToNonDirectory()
     {
         PrestoException expectedException = new PrestoException(INVALID_TABLE_PROPERTY,

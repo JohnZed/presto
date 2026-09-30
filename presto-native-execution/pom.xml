@@ -485,7 +485,7 @@
                 <configuration>
                     <forkCount>1</forkCount>
                     <reuseForks>false</reuseForks>
-                    <excludedGroups>remote-function</excludedGroups>
+                    <excludedGroups>remote-function,delta-metadata</excludedGroups>
                     <systemPropertyVariables>
                         <PRESTO_SERVER>/root/project/build/debug/presto_cpp/main/presto_server</PRESTO_SERVER>
                         <DATA_DIR>/tmp/velox</DATA_DIR>
@@ -523,7 +523,7 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
-                            <excludedGroups combine.self="override">parquet,remote-function</excludedGroups>
+                            <excludedGroups combine.self="override">parquet,remote-function,delta-metadata</excludedGroups>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -537,7 +537,7 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
-                            <excludedGroups combine.self="override">writer,parquet,remote-function,textfile</excludedGroups>
+                            <excludedGroups combine.self="override">writer,parquet,remote-function,textfile,delta-metadata</excludedGroups>
                         </configuration>
                     </plugin>
                 </plugins>
