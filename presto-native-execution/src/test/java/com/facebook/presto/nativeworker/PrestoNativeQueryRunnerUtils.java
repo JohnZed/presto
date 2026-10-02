@@ -32,7 +32,9 @@ import com.facebook.presto.iceberg.IcebergQueryRunner;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.testing.QueryRunner;
 import com.facebook.presto.tests.DistributedQueryRunner;
+import com.github.dockerjava.api.model.DeviceRequest;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Ulimit;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
@@ -540,6 +542,7 @@ public class PrestoNativeQueryRunnerUtils
         private TimeZoneKey timeZoneKey = TimeZoneKey.getTimeZoneKey(TimeZone.getDefault().getID());
         private boolean caseSensitiveParitions;
         private Optional<String> workerImage = Optional.empty();
+        private boolean enableCudf;
         // External worker launcher is applicable only for the native iceberg query runner, since it depends on other
         // properties it should be created once all the other query runner configs are set. This variable indicates
         // whether the query runner returned by builder should use an external worker launcher, it will be true only
@@ -550,7 +553,7 @@ public class PrestoNativeQueryRunnerUtils
         {
             if (queryRunnerType.equals(QueryRunnerType.NATIVE)) {
                 this.extraProperties.putAll(ImmutableMap.<String, String>builder()
-                        .put("http-server.http.port", "8080")
+                        .put("http-server.http.port", getProperty("coordinatorHttpPort").orElse("8080"))
                         .put("query.max-stage-count", "110")
                         .putAll(getNativeWorkerSystemProperties())
                         .build());
@@ -558,6 +561,7 @@ public class PrestoNativeQueryRunnerUtils
                 // Run native workers in containers when a `workerImage` property is set;
                 // otherwise launch the presto_server binary directly on the host.
                 this.workerImage = getProperty("workerImage");
+                this.enableCudf = getProperty("enableCudf").map(Boolean::parseBoolean).orElse(false);
             }
             else {
                 this.extraProperties.putAll(ImmutableMap.of(
@@ -600,7 +604,7 @@ public class PrestoNativeQueryRunnerUtils
             Optional<BiFunction<Integer, URI, Process>> externalWorkerLauncher = Optional.empty();
             if (this.useExternalWorkerLauncher) {
                 externalWorkerLauncher = getExternalWorkerLauncher("delta", "delta", serverBinary, cacheMaxSize, remoteFunctionServerUds,
-                        Optional.empty(), false, false, false, false, false, false, false, workerImage, dataDirectory);
+                        Optional.empty(), false, false, false, false, false, false, enableCudf, workerImage, dataDirectory);
             }
 
             // Set legacy_timestamp to true to adjust timestamps to timezone for Delta queries
@@ -957,7 +961,13 @@ public class PrestoNativeQueryRunnerUtils
                     if (enableCudf) {
                         configProperties = format("%s%n" +
                                 "cudf.enabled=true%n" +
-                                "cudf.debug_enabled=true", configProperties);
+                                "cudf.debug_enabled=true%n" +
+                                "cudf.log_fallback=true%n" +
+                                "cudf.allow_cpu_fallback=%s%n" +
+                                "cudf.memory_percent=%s%n",
+                                configProperties,
+                                getProperty("cudfAllowCpuFallback").orElse("true"),
+                                getProperty("cudfMemoryPercent").orElse("50"));
                     }
 
                     Files.write(tempDirectoryPath.resolve("config.properties"), configProperties.getBytes());
@@ -1061,6 +1071,15 @@ public class PrestoNativeQueryRunnerUtils
                 // worker also reads fixture files written by the host-side Java runner, so we
                 // disable labelling for the container entirely. No-op on hosts without SELinux.
                 hostConfig.withSecurityOpts(ImmutableList.of("label=disable"));
+                // The worker creates eventfds per executor thread, which exceeds Docker's default
+                // nofile limit of 1024 on hosts with many cores.
+                hostConfig.withUlimits(ImmutableList.of(new Ulimit("nofile", 262144L, 262144L)));
+                if (enableCudf) {
+                    hostConfig.withDeviceRequests(ImmutableList.of(new DeviceRequest()
+                            .withDriver("nvidia")
+                            .withDeviceIds(ImmutableList.of(getProperty("cudfGpuDevice").orElse("0")))
+                            .withCapabilities(ImmutableList.of(ImmutableList.of("gpu")))));
+                }
             });
 
             container.withCommand(

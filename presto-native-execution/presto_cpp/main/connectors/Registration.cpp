@@ -197,7 +197,7 @@ void registerConnectorFactories() {
   // Register the cuDF Delta Lake connector factory.
   facebook::presto::registerConnectorFactory(std::make_shared<
       facebook::velox::cudf_velox::connector::hive::delta::
-          CudfDeltaConnectorFactory>());
+          CudfDeltaConnectorFactory>(kDeltaConnectorName));
 #else
   // Register Delta Lake connector factory using the CPU Hive implementation.
   facebook::presto::registerConnectorFactory(
